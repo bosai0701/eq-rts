@@ -29,6 +29,35 @@ html,body{
  height:100%;
  background:#101827;
 }
+#resetMapButton{
+ position:absolute;
+ z-index:20;
+ top:12px;
+ right:12px;
+ width:42px;
+ height:42px;
+ padding:0;
+ display:flex;
+ align-items:center;
+ justify-content:center;
+ border:1px solid rgba(148,163,184,.3);
+ border-radius:50%;
+ background:rgba(11,18,32,.93);
+ color:#e8eef8;
+ box-shadow:0 3px 12px rgba(0,0,0,.3);
+ backdrop-filter:blur(8px);
+ -webkit-backdrop-filter:blur(8px);
+ cursor:pointer;
+ -webkit-tap-highlight-color:transparent;
+}
+#resetMapButton:active{
+ background:#334155;
+ transform:scale(.94);
+}
+#resetMapButton svg{
+ width:20px;
+ height:20px;
+}
 .info-panel{
  position:absolute;
  z-index:10;
@@ -91,7 +120,6 @@ html,body{
  color:#94a3b8;
  margin-top:1.4px;
 }
-/* WSS接続状態 */
 .wss-status{
  display:flex;
  align-items:center;
@@ -126,10 +154,6 @@ html,body{
  font-size:9.8px;
  margin-bottom:3.5px;
 }
-.maplibregl-ctrl-top-right{
- transform:scale(.70);
- transform-origin:top right;
-}
 .maplibregl-ctrl-bottom-right,
 .maplibregl-ctrl-bottom-left{
  transform:scale(.70);
@@ -145,12 +169,28 @@ html,body{
  }
  .time-value{font-size:11.9px}
  .stat b{font-size:13.3px}
+ #resetMapButton{
+  top:12px;
+  right:12px;
+  width:40px;
+  height:40px;
+ }
 }
 </style>
 </head>
 <body>
 
 <main id="map" aria-label="リアルタイム震度観測点マップ"></main>
+
+<button id="resetMapButton" type="button" aria-label="初期位置に戻す">
+ <svg viewBox="0 0 24 24" fill="none"
+  stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" stroke-linejoin="round">
+  <path d="m3 10 9-7 9 7"/>
+  <path d="M5 9v12h14V9"/>
+  <path d="M9 21v-7h6v7"/>
+ </svg>
+</button>
 
 <section class="info-panel">
  <div class="info-title">リアルタイム震度</div>
@@ -188,9 +228,6 @@ html,body{
 </div>
 
 <script>
-/* =====================================
-   URL設定
-===================================== */
 const WS_URL =
 'wss://server.mirakuro5472.workers.dev/';
 
@@ -200,9 +237,6 @@ const NTP_URL =
 const POINTS_URL =
 'https://raw.githubusercontent.com/ingen084/kyoshin-monitor-observation-points/refs/heads/master/intensity-points.json';
 
-/* =====================================
-   更新設定
-===================================== */
 const TIME_SYNC_INTERVAL = 60000;
 const TIME_SYNC_SAMPLES = 5;
 const POINTS_TIMEOUT = 8000;
@@ -211,9 +245,21 @@ const RECONNECT_MAX = 10000;
 const PING_INTERVAL = 10000;
 const HIDDEN_DISCONNECT = 60000;
 
-/* =====================================
-   状態
-===================================== */
+const INITIAL_CENTER = [138,36.5];
+const INITIAL_ZOOM = 4.2;
+
+const JAPAN_BOUNDS = [
+ [122.5,24],
+ [146,46]
+];
+
+const MAP_PADDING = {
+ top:90,
+ right:35,
+ bottom:70,
+ left:35
+};
+
 let clockBaseEpoch = null;
 let clockBasePerf = null;
 let clockSynced = false;
@@ -237,9 +283,6 @@ const HEX = Array.from(
  (_,i)=>i.toString(16).padStart(2,'0')
 );
 
-/* =====================================
-   共通処理
-===================================== */
 const p2 = n=>String(n).padStart(2,'0');
 
 function setText(el,text){
@@ -276,9 +319,6 @@ function formatJST(ms){
  return `${t.Y}/${t.M}/${t.D} ${t.h}:${t.m}:${t.s}`;
 }
 
-/* =====================================
-   Wolfx時刻同期
-===================================== */
 async function fetchWolfxTime(){
  const start=performance.now();
 
@@ -391,9 +431,6 @@ async function maintainClock(){
  setTimeout(maintainClock,TIME_SYNC_INTERVAL);
 }
 
-/* =====================================
-   Wolfx時刻表示
-===================================== */
 function tickSyncTime(){
  const now=getSyncedNow();
 
@@ -405,9 +442,6 @@ function tickSyncTime(){
  );
 }
 
-/* =====================================
-   WSS受信
-===================================== */
 const wsStats={
  state:'未接続',
  connects:0,
@@ -552,9 +586,6 @@ function connectStream(){
  };
 }
 
-/* =====================================
-   RGB → HSV変換
-===================================== */
 function rgbToHSV(r,g,b){
  r/=255;
  g/=255;
@@ -590,9 +621,6 @@ function rgbToHSV(r,g,b){
  return {h,s,v};
 }
 
-/* =====================================
-   HSV → 色の位置
-===================================== */
 function colorToPosition(hsv){
  const h=hsv.h;
  const s=hsv.s;
@@ -650,9 +678,6 @@ function colorToPosition(hsv){
  return p;
 }
 
-/* =====================================
-   観測点JSON解析
-===================================== */
 function walkRecords(value,out=[]){
  if(Array.isArray(value)){
   for(const v of value){
@@ -681,9 +706,6 @@ function walkRecords(value,out=[]){
  return out;
 }
 
-/* =====================================
-   観測点の事前計算
-===================================== */
 function preparePoints(recs){
  const result=[];
 
@@ -738,9 +760,6 @@ function preparePoints(recs){
  return result;
 }
 
-/* =====================================
-   観測点JSON取得
-===================================== */
 function loadPoints(){
  if(recordsPromise){
   return recordsPromise;
@@ -809,9 +828,6 @@ function loadPoints(){
  return recordsPromise;
 }
 
-/* =====================================
-   観測点の作成
-===================================== */
 function prepareStations(width,height){
  if(
   stations.length&&
@@ -858,9 +874,6 @@ function prepareStations(width,height){
  forceUpdate=true;
 }
 
-/* =====================================
-   受信データの反映
-===================================== */
 function applyFrame(buf){
  const started=performance.now();
 
@@ -872,7 +885,6 @@ function applyFrame(buf){
 
  const ms=dv.getFloat64(1,true);
 
- /* 古いフレーム・同時刻フレームを破棄 */
  if(
   lastAppliedImageMs!==null&&
   ms<=lastAppliedImageMs
@@ -1011,9 +1023,6 @@ function applyFrame(buf){
  lastImageCompletedPerf=performance.now();
 }
 
-/* =====================================
-   地図レイヤー
-===================================== */
 function addSourceAndLayer(){
  if(!map.getSource('stations')){
   map.addSource('stations',{
@@ -1103,9 +1112,6 @@ function addSourceAndLayer(){
  }
 }
 
-/* =====================================
-   HTMLエスケープ
-===================================== */
 function esc(v){
  return String(v??'').replace(/[&<>"']/g,c=>({
   '&':'&amp;',
@@ -1116,33 +1122,60 @@ function esc(v){
  }[c]));
 }
 
-/* =====================================
-   全観測点表示
-===================================== */
 function fitAll(){
- if(!map||!stations.length)return;
+ if(!map)return;
 
  const bounds=new maplibregl.LngLatBounds();
 
+ let hasValidPoint=false;
+
  for(const st of stations){
-  bounds.extend(st.geom.coordinates);
+  if(
+   !st.geom||
+   !Array.isArray(st.geom.coordinates)
+  ){
+   continue;
+  }
+
+  const [lon,lat]=st.geom.coordinates;
+
+  if(
+   !Number.isFinite(lon)||
+   !Number.isFinite(lat)
+  ){
+   continue;
+  }
+
+  bounds.extend([lon,lat]);
+  hasValidPoint=true;
  }
 
- map.fitBounds(bounds,{
-  padding:45,
-  maxZoom:7,
+ const options={
+  padding:MAP_PADDING,
+  maxZoom:5.2,
+  bearing:0,
+  pitch:0,
   duration:700
- });
+ };
+
+ if(hasValidPoint){
+  map.fitBounds(bounds,options);
+ }else{
+  map.fitBounds(JAPAN_BOUNDS,options);
+ }
 }
 
-/* =====================================
-   地図初期化
-===================================== */
+$('resetMapButton').addEventListener('click',()=>{
+ fitAll();
+});
+
 map=new maplibregl.Map({
  container:'map',
  style:'https://tiles.openfreemap.org/styles/dark',
- center:[138,37],
- zoom:4.2,
+ center:INITIAL_CENTER,
+ zoom:INITIAL_ZOOM,
+ bearing:0,
+ pitch:0,
  attributionControl:{
   customAttribution:
    '<a href="https://www.kyoshin.bosai.go.jp/ja/about_kmoni/" target="_blank" rel="noopener noreferrer">防災科学技術研究所（NIED）</a>'
@@ -1153,14 +1186,6 @@ map.on('error',e=>{
  console.error('MapLibre:',e.error||e);
 });
 
-map.addControl(
- new maplibregl.NavigationControl(),
- 'top-right'
-);
-
-/* =====================================
-   バックグラウンド・復帰時の接続管理
-===================================== */
 document.addEventListener(
  'visibilitychange',
  ()=>{
@@ -1197,11 +1222,10 @@ window.addEventListener(
  }
 );
 
-/* =====================================
-   起動処理
-===================================== */
 map.on('load',()=>{
  addSourceAndLayer();
+
+ fitAll();
 
  maintainClock();
 
