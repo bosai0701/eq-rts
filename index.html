@@ -3,16 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<meta name="theme-color" content="#101827">
+<meta name="theme-color" content="#f5f7fa">
 <title>EQ-RTS</title>
+
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
 <style>
 :root{
- color-scheme:dark;
+ color-scheme:light;
  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
- background:#0b1220;
- color:#e8eef8;
+ background:#f5f7fa;
+ color:#172033;
 }
 *{box-sizing:border-box}
 html,body{
@@ -20,14 +22,14 @@ html,body{
  height:100%;
  margin:0;
  overflow:hidden;
- background:#0b1220;
+ background:#f5f7fa;
 }
 #map{
  position:absolute;
  inset:0;
  width:100%;
  height:100%;
- background:#101827;
+ background:#e9edf2;
 }
 #resetMapButton{
  position:absolute;
@@ -40,18 +42,18 @@ html,body{
  display:flex;
  align-items:center;
  justify-content:center;
- border:1px solid rgba(148,163,184,.3);
+ border:1px solid rgba(71,85,105,.25);
  border-radius:50%;
- background:rgba(11,18,32,.93);
- color:#e8eef8;
- box-shadow:0 3px 12px rgba(0,0,0,.3);
+ background:rgba(255,255,255,.96);
+ color:#172033;
+ box-shadow:0 3px 12px rgba(0,0,0,.16);
  backdrop-filter:blur(8px);
  -webkit-backdrop-filter:blur(8px);
  cursor:pointer;
  -webkit-tap-highlight-color:transparent;
 }
 #resetMapButton:active{
- background:#334155;
+ background:#e2e8f0;
  transform:scale(.94);
 }
 #resetMapButton svg{
@@ -66,23 +68,23 @@ html,body{
  width:calc(100% - 17.8px);
  max-width:273px;
  padding:8.4px 9.8px;
- background:rgba(11,18,32,.91);
- border:1.27px solid rgba(148,163,184,.25);
+ background:rgba(255,255,255,.96);
+ border:1.27px solid rgba(71,85,105,.2);
  border-radius:8.4px;
  backdrop-filter:blur(8.4px);
  -webkit-backdrop-filter:blur(8.4px);
- box-shadow:0 3.5px 15.4px rgba(0,0,0,.25);
+ box-shadow:0 3.5px 15.4px rgba(0,0,0,.13);
  pointer-events:none;
 }
 .info-title{
  font-size:9.1px;
  font-weight:700;
  margin-bottom:6.3px;
- color:#cbd5e1;
+ color:#334155;
 }
 .time-label{
  font-size:7.7px;
- color:#94a3b8;
+ color:#64748b;
  margin-bottom:2.1px;
 }
 .time-value{
@@ -90,11 +92,11 @@ html,body{
  font-weight:700;
  letter-spacing:.21px;
  font-variant-numeric:tabular-nums;
- color:#fff;
+ color:#172033;
 }
 .divider{
  height:1.27px;
- background:rgba(148,163,184,.2);
+ background:rgba(100,116,139,.2);
  margin:7px 0;
 }
 .stats{
@@ -103,7 +105,7 @@ html,body{
  gap:6.3px;
 }
 .stat{
- background:rgba(30,41,59,.65);
+ background:#edf1f5;
  border-radius:5.6px;
  padding:6.3px 7.7px;
 }
@@ -111,13 +113,13 @@ html,body{
  display:block;
  font-size:14.7px;
  font-weight:700;
- color:#fff;
+ color:#172033;
  font-variant-numeric:tabular-nums;
 }
 .stat span{
  display:block;
  font-size:7.7px;
- color:#94a3b8;
+ color:#64748b;
  margin-top:1.4px;
 }
 .wss-status{
@@ -127,33 +129,22 @@ html,body{
  margin-top:6px;
  padding:5px 7px;
  border-radius:4.9px;
- background:rgba(30,41,59,.7);
+ background:#edf1f5;
  font-size:8px;
  font-weight:700;
- color:#a8bbd3;
+ color:#475569;
 }
 .wss-dot{
  width:6px;
  height:6px;
  flex-shrink:0;
  border-radius:50%;
- background:#ef4444;
+ background:#dc3545;
 }
 .wss-status.connected .wss-dot{
- background:#22c55e;
+ background:#168447;
 }
 .hidden-elements{display:none}
-.maplibregl-popup-content{
- color:#152033;
- font-size:8.4px;
- padding:5.6px;
- border-radius:4.9px;
-}
-.popup-title{
- font-weight:700;
- font-size:9.8px;
- margin-bottom:3.5px;
-}
 .maplibregl-ctrl-bottom-right,
 .maplibregl-ctrl-bottom-left{
  transform:scale(.70);
@@ -178,6 +169,7 @@ html,body{
 }
 </style>
 </head>
+
 <body>
 
 <main id="map" aria-label="リアルタイム震度観測点マップ"></main>
@@ -1059,67 +1051,7 @@ function addSourceAndLayer(){
     'circle-opacity':1
    }
   });
-
-  map.on('click','station-points',e=>{
-   const f=e.features&&e.features[0];
-
-   if(!f)return;
-
-   const st=stations[f.properties.i];
-
-   if(!st)return;
-
-   const hsv=rgbToHSV(st.r,st.g,st.b);
-
-   const hsvText=
-    `${hsv.h.toFixed(5)}, `+
-    `${hsv.s.toFixed(5)}, `+
-    `${hsv.v.toFixed(5)}`;
-
-   new maplibregl.Popup({
-    closeButton:true,
-    offset:4.4
-   })
-   .setLngLat(st.geom.coordinates)
-   .setHTML(`
-    <div class="popup-title">
-     ${esc(st.name)}
-    </div>
-    ${st.region?
-     `地域：${esc(st.region)}<br>`:''}
-    ${st.code?
-     `コード：${esc(st.code)}<br>`:''}
-    画像座標：(${st.x}, ${st.y})<br>
-    RGB：${st.r}, ${st.g}, ${st.b}<br>
-    HEX：${esc(st.hex)}<br>
-    HSV：${esc(hsvText)}<br>
-    色位置：${Number(st.position).toFixed(5)}
-   `)
-   .addTo(map);
-  });
-
-  map.on(
-   'mouseenter',
-   'station-points',
-   ()=>map.getCanvas().style.cursor='pointer'
-  );
-
-  map.on(
-   'mouseleave',
-   'station-points',
-   ()=>map.getCanvas().style.cursor=''
-  );
  }
-}
-
-function esc(v){
- return String(v??'').replace(/[&<>"']/g,c=>({
-  '&':'&amp;',
-  '<':'&lt;',
-  '>':'&gt;',
-  '"':'&quot;',
-  "'":'&#39;'
- }[c]));
 }
 
 function fitAll(){
@@ -1171,11 +1103,14 @@ $('resetMapButton').addEventListener('click',()=>{
 
 map=new maplibregl.Map({
  container:'map',
- style:'https://tiles.openfreemap.org/styles/dark',
+
+ style:'https://tiles.openfreemap.org/styles/positron',
+
  center:INITIAL_CENTER,
  zoom:INITIAL_ZOOM,
  bearing:0,
  pitch:0,
+
  attributionControl:{
   customAttribution:
    '<a href="https://www.kyoshin.bosai.go.jp/ja/about_kmoni/" target="_blank" rel="noopener noreferrer">防災科学技術研究所（NIED）</a>'
