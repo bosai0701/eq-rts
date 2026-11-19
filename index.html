@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -94,6 +95,12 @@ html,body{
  font-variant-numeric:tabular-nums;
  color:#172033;
 }
+
+/* 画像時刻が正規時刻より遅れている場合 */
+.time-value.image-stale{
+ color:#dc2626;
+}
+
 .divider{
  height:1.27px;
  background:rgba(100,116,139,.2);
@@ -237,6 +244,12 @@ const RECONNECT_MAX = 10000;
 const PING_INTERVAL = 10000;
 const HIDDEN_DISCONNECT = 60000;
 
+/* 画像時刻と正規時刻の許容差 */
+const IMAGE_LAG_LIMIT = 3000;
+
+/* 最後に受信した画像の保存先 */
+const LAST_FRAME_CACHE_KEY = 'EQ_RTS_LAST_FRAME_V1';
+
 const INITIAL_CENTER = [138,36.5];
 const INITIAL_ZOOM = 4.2;
 
@@ -268,6 +281,9 @@ let lastImageWidth = 0;
 let lastImageHeight = 0;
 let lastImageCompletedPerf = null;
 
+/* キャッシュ復元済みかどうか */
+let lastFrameCacheRestored = false;
+
 const $ = id => document.getElementById(id);
 
 const HEX = Array.from(
@@ -290,6 +306,244 @@ function getSyncedNow(){
 
  return clockBaseEpoch+
   (performance.now()-clockBasePerf);
+}
+
+/*
+ * 最後に受信した画像の時刻と正規時刻を比較
+ * 3秒を超えて遅れていれば赤色
+ */
+function updateImageTimeColor(){
+ const el=$('imgTime');
+
+ if(lastAppliedImageMs===null){
+  el.classList.remove('image-stale');
+  return;
+ }
+
+ const lag=getSyncedNow()-lastAppliedImageMs;
+
+ el.classList.toggle(
+  'image-stale',
+  lag>IMAGE_LAG_LIMIT
+ );
+}
+
+/*
+ * 最後に表示した画像をブラウザ内に保存
+ *
+ * 保存する内容：
+ * ・画像時刻
+ * ・画像サイズ
+ * ・観測点ごとのRGBデータ
+ *
+ * 次回ページを開いたときに復元できるようにする
+ */
+function saveLastFrameCache(){
+ if(
+  lastAppliedImageMs===null||
+  !stations.length
+ ){
+  return;
+ }
+
+ try{
+  const points=[];
+
+  for(const st of stations){
+   if(!st.valid)continue;
+
+   points.push([
+    st.i,
+    st.r,
+    st.g,
+    st.b
+   ]);
+  }
+
+  const cache={
+   version:1,
+   ms:lastAppliedImageMs,
+   width:lastImageWidth,
+   height:lastImageHeight,
+   total:stations.length,
+   points
+  };
+
+  localStorage.setItem(
+   LAST_FRAME_CACHE_KEY,
+   JSON.stringify(cache)
+  );
+
+ }catch(e){
+  console.warn('最後の画像を保存できません:',e);
+ }
+}
+
+/*
+ * 保存済みの最後の画像を復元
+ *
+ * WSSサーバーが停止していても、
+ * 前回の観測状態を地図に表示する
+ */
+function restoreLastFrameCache(){
+ if(lastFrameCacheRestored)return false;
+
+ if(
+  !preparedPoints||
+  !map||
+  !map.getSource('stations')
+ ){
+  return false;
+ }
+
+ lastFrameCacheRestored=true;
+
+ try{
+  const raw=localStorage.getItem(
+   LAST_FRAME_CACHE_KEY
+  );
+
+  if(!raw)return false;
+
+  const cache=JSON.parse(raw);
+
+  if(
+   !cache||
+   cache.version!==1||
+   !Number.isFinite(cache.ms)||
+   !Number.isFinite(cache.width)||
+   !Number.isFinite(cache.height)||
+   !Array.isArray(cache.points)
+  ){
+   return false;
+  }
+
+  prepareStations(
+   cache.width,
+   cache.height
+  );
+
+  if(
+   stations.length!==cache.total
+  ){
+   stations=[];
+   lastImageWidth=0;
+   lastImageHeight=0;
+
+   console.warn(
+    '保存画像と現在の観測点データが一致しません'
+   );
+
+   return false;
+  }
+
+  /* 既存の状態を初期化 */
+  for(const st of stations){
+   st.valid=false;
+   st.position=null;
+  }
+
+  for(const row of cache.points){
+   if(!Array.isArray(row)||row.length<4){
+    continue;
+   }
+
+   const index=Number(row[0]);
+   const st=stations[index];
+
+   if(!st)continue;
+
+   const r=Number(row[1]);
+   const g=Number(row[2]);
+   const b=Number(row[3]);
+
+   if(
+    !Number.isInteger(r)||
+    !Number.isInteger(g)||
+    !Number.isInteger(b)||
+    r<0||r>255||
+    g<0||g>255||
+    b<0||b>255
+   ){
+    continue;
+   }
+
+   const position=colorToPosition(
+    rgbToHSV(r,g,b)
+   );
+
+   if(position===null)continue;
+
+   st.r=r;
+   st.g=g;
+   st.b=b;
+
+   st.hex='#'+HEX[r]+HEX[g]+HEX[b];
+   st.position=position;
+   st.valid=true;
+  }
+
+  const features=[];
+  let shown=0;
+
+  for(const st of stations){
+   if(!st.valid)continue;
+
+   shown++;
+
+   features.push({
+    type:'Feature',
+    geometry:st.geom,
+    properties:{
+     i:st.i,
+     hex:st.hex
+    }
+   });
+  }
+
+  const source=map.getSource('stations');
+
+  if(source){
+   source.setData({
+    type:'FeatureCollection',
+    features
+   });
+  }
+
+  lastAppliedImageMs=cache.ms;
+
+  setText(
+   $('imgTime'),
+   formatJST(cache.ms)
+  );
+
+  setText(
+   $('imageSize'),
+   `${cache.width} × ${cache.height}px`
+  );
+
+  setText(
+   $('shown'),
+   shown.toLocaleString()
+  );
+
+  lastImageCompletedPerf=null;
+  forceUpdate=false;
+
+  updateImageTimeColor();
+
+  console.log('最後の画像を復元しました',{
+   imageTime:formatJST(cache.ms),
+   shown,
+   total:stations.length
+  });
+
+  return true;
+
+ }catch(e){
+  console.warn('最後の画像を復元できません:',e);
+  return false;
+ }
 }
 
 function jstParts(ms){
@@ -398,6 +652,8 @@ async function syncClock(){
   clockBasePerf=best.perf;
   clockSynced=true;
 
+  updateImageTimeColor();
+
   console.log('Wolfx時刻同期完了',{
    RTT:Math.round(best.rtt),
    samples:samples.length,
@@ -427,6 +683,9 @@ function tickSyncTime(){
  const now=getSyncedNow();
 
  setText($('syncTime'),formatJST(now));
+
+ /* 正規時刻の進行に合わせて画像の遅延を再判定 */
+ updateImageTimeColor();
 
  setTimeout(
   tickSyncTime,
@@ -574,6 +833,7 @@ function connectStream(){
 
   updateWsInfo();
 
+  /* 最後の画像は消さず、そのまま地図に残す */
   scheduleReconnect();
  };
 }
@@ -804,6 +1064,9 @@ function loadPoints(){
     prepared:preparedPoints.length
    });
 
+   /* 観測点データ取得後、保存済み画像を復元 */
+   restoreLastFrameCache();
+
    return preparedPoints;
 
   }finally{
@@ -1013,6 +1276,12 @@ function applyFrame(buf){
  lastAppliedImageMs=ms;
 
  lastImageCompletedPerf=performance.now();
+
+ /* 新しい画像を受信した時点で即時判定 */
+ updateImageTimeColor();
+
+ /* 最新の画像状態をブラウザに保存 */
+ saveLastFrameCache();
 }
 
 function addSourceAndLayer(){
