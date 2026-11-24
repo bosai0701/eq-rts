@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -95,9 +94,6 @@ html,body{
  font-variant-numeric:tabular-nums;
  color:#172033;
 }
-.time-value.image-stale{
- color:#dc2626;
-}
 .divider{
  height:1.27px;
  background:rgba(100,116,139,.2);
@@ -148,6 +144,11 @@ html,body{
 .wss-status.connected .wss-dot{
  background:#168447;
 }
+#shakeInfo .wss-dot{background:#94a3b8}
+#shakeInfo.pending{background:#fef3c7;color:#92400e}
+#shakeInfo.pending .wss-dot{background:#f59e0b}
+#shakeInfo.confirmed{background:#fee2e2;color:#991b1b}
+#shakeInfo.confirmed .wss-dot{background:#dc2626}
 .hidden-elements{display:none}
 .maplibregl-ctrl-bottom-right,
 .maplibregl-ctrl-bottom-left{
@@ -216,6 +217,7 @@ html,body{
   <span class="wss-dot"></span>
   <span>WSS 未接続</span>
  </div>
+ <div class="wss-status" id="shakeInfo"><span class="wss-dot"></span><span>揺れ検知 待機中</span></div>
 </section>
 
 <div class="hidden-elements">
@@ -225,7 +227,7 @@ html,body{
 
 <script>
 const WS_URL =
-'wss://seller-slowly-mounts-sounds.trycloudflare.com/';
+'wss://tags-clicks-repeated-painted.trycloudflare.com/';
 
 const NTP_URL =
 'https://api.wolfx.jp/ntp.json';
@@ -240,16 +242,6 @@ const RECONNECT_BASE = 1000;
 const RECONNECT_MAX = 10000;
 const PING_INTERVAL = 10000;
 const HIDDEN_DISCONNECT = 60000;
-
-const IMAGE_LAG_LIMIT = 3000;
-
-/* 観測点の表示保持時間 */
-const STATION_HOLD_TIME = 3000;
-
-/* 保持時間の確認間隔 */
-const STATION_CHECK_INTERVAL = 250;
-
-const LAST_FRAME_CACHE_KEY = 'EQ_RTS_LAST_FRAME_V1';
 
 const INITIAL_CENTER = [138,36.5];
 const INITIAL_ZOOM = 4.2;
@@ -281,8 +273,7 @@ let map;
 let lastImageWidth = 0;
 let lastImageHeight = 0;
 let lastImageCompletedPerf = null;
-
-let lastFrameCacheRestored = false;
+let latestShakeState = null;
 
 const $ = id => document.getElementById(id);
 
@@ -306,193 +297,6 @@ function getSyncedNow(){
 
  return clockBaseEpoch+
   (performance.now()-clockBasePerf);
-}
-
-function updateImageTimeColor(){
- const el=$('imgTime');
-
- if(lastAppliedImageMs===null){
-  el.classList.remove('image-stale');
-  return;
- }
-
- const lag=getSyncedNow()-lastAppliedImageMs;
-
- el.classList.toggle(
-  'image-stale',
-  lag>IMAGE_LAG_LIMIT
- );
-}
-
-function saveLastFrameCache(){
- if(
-  lastAppliedImageMs===null||
-  !stations.length
- ){
-  return;
- }
-
- try{
-  const points=[];
-
-  for(const st of stations){
-   if(!st.valid)continue;
-
-   points.push([
-    st.i,
-    st.r,
-    st.g,
-    st.b
-   ]);
-  }
-
-  const cache={
-   version:1,
-   ms:lastAppliedImageMs,
-   width:lastImageWidth,
-   height:lastImageHeight,
-   total:stations.length,
-   points
-  };
-
-  localStorage.setItem(
-   LAST_FRAME_CACHE_KEY,
-   JSON.stringify(cache)
-  );
-
- }catch(e){
-  console.warn('最後の画像を保存できません:',e);
- }
-}
-
-function restoreLastFrameCache(){
- if(lastFrameCacheRestored)return false;
-
- if(
-  !preparedPoints||
-  !map||
-  !map.getSource('stations')
- ){
-  return false;
- }
-
- lastFrameCacheRestored=true;
-
- try{
-  const raw=localStorage.getItem(
-   LAST_FRAME_CACHE_KEY
-  );
-
-  if(!raw)return false;
-
-  const cache=JSON.parse(raw);
-
-  if(
-   !cache||
-   cache.version!==1||
-   !Number.isFinite(cache.ms)||
-   !Number.isFinite(cache.width)||
-   !Number.isFinite(cache.height)||
-   !Array.isArray(cache.points)
-  ){
-   return false;
-  }
-
-  prepareStations(
-   cache.width,
-   cache.height
-  );
-
-  if(stations.length!==cache.total){
-   stations=[];
-   lastImageWidth=0;
-   lastImageHeight=0;
-
-   console.warn(
-    '保存画像と現在の観測点データが一致しません'
-   );
-
-   return false;
-  }
-
-  for(const st of stations){
-   st.valid=false;
-   st.position=null;
-   st.invalidSince=null;
-  }
-
-  for(const row of cache.points){
-   if(!Array.isArray(row)||row.length<4){
-    continue;
-   }
-
-   const index=Number(row[0]);
-   const st=stations[index];
-
-   if(!st)continue;
-
-   const r=Number(row[1]);
-   const g=Number(row[2]);
-   const b=Number(row[3]);
-
-   if(
-    !Number.isInteger(r)||
-    !Number.isInteger(g)||
-    !Number.isInteger(b)||
-    r<0||r>255||
-    g<0||g>255||
-    b<0||b>255
-   ){
-    continue;
-   }
-
-   const position=colorToPosition(
-    rgbToHSV(r,g,b)
-   );
-
-   if(position===null)continue;
-
-   st.r=r;
-   st.g=g;
-   st.b=b;
-
-   st.hex='#'+HEX[r]+HEX[g]+HEX[b];
-   st.position=position;
-   st.valid=true;
-   st.invalidSince=null;
-  }
-
-  updateStationSource();
-
-  lastAppliedImageMs=cache.ms;
-
-  setText(
-   $('imgTime'),
-   formatJST(cache.ms)
-  );
-
-  setText(
-   $('imageSize'),
-   `${cache.width} × ${cache.height}px`
-  );
-
-  lastImageCompletedPerf=null;
-  forceUpdate=false;
-
-  updateImageTimeColor();
-
-  console.log('最後の画像を復元しました',{
-   imageTime:formatJST(cache.ms),
-   shown:stations.filter(st=>st.valid).length,
-   total:stations.length
-  });
-
-  return true;
-
- }catch(e){
-  console.warn('最後の画像を復元できません:',e);
-  return false;
- }
 }
 
 function jstParts(ms){
@@ -601,8 +405,6 @@ async function syncClock(){
   clockBasePerf=best.perf;
   clockSynced=true;
 
-  updateImageTimeColor();
-
   console.log('Wolfx時刻同期完了',{
    RTT:Math.round(best.rtt),
    samples:samples.length,
@@ -632,8 +434,6 @@ function tickSyncTime(){
  const now=getSyncedNow();
 
  setText($('syncTime'),formatJST(now));
-
- updateImageTimeColor();
 
  setTimeout(
   tickSyncTime,
@@ -699,6 +499,11 @@ function handleTextMessage(text){
 
  if(msg&&msg.type==='error'){
   wsStats.errors++;
+  return;
+ }
+ if(msg&&msg.type==='shake_state'){
+  latestShakeState=msg.state||null;
+  renderServerShake();
  }
 }
 
@@ -1011,8 +816,6 @@ function loadPoints(){
     prepared:preparedPoints.length
    });
 
-   restoreLastFrameCache();
-
    return preparedPoints;
 
   }finally{
@@ -1069,107 +872,15 @@ function prepareStations(width,height){
 
    hex:'#000000',
    position:null,
-   valid:false,
-
-   /* 未検出が始まった時刻 */
-   invalidSince:null
+   valid:false
   }));
 
  forceUpdate=true;
 }
 
-/*
- * 観測点のGeoJSONを更新
- */
-function updateStationSource(){
- if(!map)return;
-
- const source=map.getSource('stations');
-
- if(!source)return;
-
- const features=[];
- let shown=0;
-
- for(const st of stations){
-  if(!st.valid)continue;
-
-  shown++;
-
-  features.push({
-   type:'Feature',
-   geometry:st.geom,
-   properties:{
-    i:st.i,
-    hex:st.hex
-   }
-  });
- }
-
- source.setData({
-  type:'FeatureCollection',
-  features
- });
-
- setText(
-  $('shown'),
-  shown.toLocaleString()
- );
-}
-
-/*
- * 3秒間の表示保持処理
- *
- * invalidSinceが設定された観測点だけを対象にする。
- * 差分フレームに含まれていない観測点は変更しない。
- */
-function expireHeldStations(){
- if(!stations.length)return;
-
- const now=performance.now();
-
- let changed=false;
-
- for(const st of stations){
-  if(
-   !st.valid||
-   st.invalidSince===null
-  ){
-   continue;
-  }
-
-  if(
-   now-st.invalidSince>=STATION_HOLD_TIME
-  ){
-   st.valid=false;
-   st.position=null;
-   st.invalidSince=null;
-
-   changed=true;
-  }
- }
-
- if(changed){
-  updateStationSource();
-
-  saveLastFrameCache();
-
-  console.log('未検出観測点を非表示にしました');
- }
-}
-
-/*
- * 観測点保持タイマー
- */
-setInterval(
- expireHeldStations,
- STATION_CHECK_INTERVAL
-);
-
-/*
- * フレーム処理
- */
 function applyFrame(buf){
+ const started=performance.now();
+
  if(buf.byteLength<22)return;
 
  const dv=new DataView(buf);
@@ -1215,11 +926,12 @@ function applyFrame(buf){
 
  let changed=forceUpdate;
 
- /*
-  * フルフレームでも一括削除しない。
-  * 各観測点の未検出通知を個別に処理する。
-  */
  if(flags&1){
+  for(const st of stations){
+   st.valid=false;
+   st.position=null;
+  }
+
   changed=true;
  }
 
@@ -1231,21 +943,11 @@ function applyFrame(buf){
 
   if(!st)continue;
 
-  const valid=dv.getUint8(o+2);
+  changed=true;
 
-  /*
-   * 未検出の場合
-   * 最初の未検出時刻だけ記録し、
-   * 直前の正常な表示を保持する。
-   */
-  if(!valid){
-   if(
-    st.valid&&
-    st.invalidSince===null
-   ){
-    st.invalidSince=performance.now();
-   }
-
+  if(!dv.getUint8(o+2)){
+   st.valid=false;
+   st.position=null;
    continue;
   }
 
@@ -1253,55 +955,65 @@ function applyFrame(buf){
   const g=dv.getUint8(o+4);
   const b=dv.getUint8(o+5);
 
-  const position=colorToPosition(
-   rgbToHSV(r,g,b)
-  );
-
-  /*
-   * 色が検出対象外の場合も
-   * 一時的な未検出として扱う。
-   */
-  if(position===null){
-   if(
-    st.valid&&
-    st.invalidSince===null
-   ){
-    st.invalidSince=performance.now();
-   }
-
-   continue;
-  }
-
-  /*
-   * 正常な色を検出した場合は即時更新
-   */
   st.r=r;
   st.g=g;
   st.b=b;
 
+  const position=colorToPosition(
+   rgbToHSV(r,g,b)
+  );
+
+  if(position===null){
+   st.valid=false;
+   st.position=null;
+   continue;
+  }
+
   st.hex='#'+HEX[r]+HEX[g]+HEX[b];
   st.position=position;
   st.valid=true;
-
-  /*
-   * 再検出したので保持タイマーを解除
-   */
-  st.invalidSince=null;
-
-  changed=true;
  }
 
- /*
-  * 保持時間を超えた観測点を処理
-  */
- expireHeldStations();
+ let shown=0;
+
+ for(const st of stations){
+  if(st.valid)shown++;
+ }
+
+ setText(
+  $('shown'),
+  shown.toLocaleString()
+ );
 
  if(changed&&map){
-  updateStationSource();
-  forceUpdate=false;
- }
+  const source=map.getSource('stations');
 
- const shown=stations.filter(st=>st.valid).length;
+  if(source){
+   const features=[];
+
+   for(const st of stations){
+    if(!st.valid)continue;
+
+    features.push({
+     type:'Feature',
+
+     geometry:st.geom,
+
+     properties:{
+      i:st.i,
+      hex:st.hex
+     }
+    });
+   }
+
+   source.setData({
+    type:'FeatureCollection',
+    features
+   });
+
+   forceUpdate=false;
+  }
+ }
 
  if(firstFit&&shown){
   firstFit=false;
@@ -1313,10 +1025,39 @@ function applyFrame(buf){
  lastAppliedImageMs=ms;
 
  lastImageCompletedPerf=performance.now();
+}
 
- updateImageTimeColor();
 
- saveLastFrameCache();
+function serverCircle(lat,lon,radiusKm,properties){
+ const ring=[],steps=48;
+ const dLat=radiusKm/110.57;
+ const dLon=radiusKm/(111.32*Math.max(.1,Math.cos(lat*Math.PI/180)));
+ for(let i=0;i<=steps;i++){const a=i/steps*Math.PI*2;ring.push([lon+dLon*Math.cos(a),lat+dLat*Math.sin(a)]);}
+ return {type:'Feature',geometry:{type:'Polygon',coordinates:[ring]},properties};
+}
+function renderServerShake(){
+ const state=latestShakeState;
+ if(!state)return;
+ const areas=[],points=[];
+ for(const evt of state.events||[]){
+  areas.push(serverCircle(evt.lat,evt.lon,evt.radius,{c:evt.confirmed?1:0,hex:evt.color||'#16a34a',id:evt.id}));
+  for(const p of evt.points||[]){points.push({type:'Feature',geometry:{type:'Point',coordinates:[p.lon,p.lat]},properties:{hex:p.color||'#16a34a',c:evt.confirmed?1:0}});}
+ }
+ if(map){
+  const a=map.getSource('shake-areas'),p=map.getSource('shake-points');
+  if(a)a.setData({type:'FeatureCollection',features:areas});
+  if(p)p.setData({type:'FeatureCollection',features:points});
+ }
+ const el=$('shakeInfo');
+ if(!el)return;
+ const confirmed=Number(state.confirmed||0),pending=Number(state.pending||0);
+ el.classList.toggle('confirmed',confirmed>0);
+ el.classList.toggle('pending',pending>0&&confirmed===0);
+ const label=el.querySelector('span:last-child');
+ if(!confirmed&&!pending)setText(label,'揺れ検知 なし');
+ else if(confirmed&&pending)setText(label,`揺れ検知 ${confirmed}件確定・${pending}件未確定`);
+ else if(confirmed)setText(label,`揺れ検知 ${confirmed}件（確定）`);
+ else setText(label,`揺れ検知 ${pending}件（未確定）`);
 }
 
 function addSourceAndLayer(){
@@ -1341,21 +1082,28 @@ function addSourceAndLayer(){
      'interpolate',
      ['linear'],
      ['zoom'],
-     2,1.55,
-     5,3.0,
-     8,4.0,
-     11,4.85
+     2,1.5,
+     5,2.9,
+     8,3.8,
+     11,4.7
     ],
 
     'circle-color':['get','hex'],
 
     'circle-stroke-color':'#ffffff',
-    'circle-stroke-width':0.25,
+    'circle-stroke-width':0.35,
 
     'circle-opacity':1
    }
   });
  }
+
+ if(!map.getSource('shake-areas'))map.addSource('shake-areas',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+ if(!map.getSource('shake-points'))map.addSource('shake-points',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+ if(!map.getLayer('shake-area-fill'))map.addLayer({id:'shake-area-fill',type:'fill',source:'shake-areas',paint:{'fill-color':['get','hex'],'fill-opacity':['case',['==',['get','c'],1],0.12,0.05]}});
+ if(!map.getLayer('shake-area-line'))map.addLayer({id:'shake-area-line',type:'line',source:'shake-areas',paint:{'line-color':['get','hex'],'line-width':2,'line-dasharray':['case',['==',['get','c'],1],[1,0],[2,2]]}});
+ if(!map.getLayer('shake-point-ring'))map.addLayer({id:'shake-point-ring',type:'circle',source:'shake-points',paint:{'circle-radius':6,'circle-color':'rgba(0,0,0,0)','circle-stroke-color':['get','hex'],'circle-stroke-width':1.5}});
+ renderServerShake();
 }
 
 function fitAll(){
